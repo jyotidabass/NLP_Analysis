@@ -1,0 +1,1368 @@
+---
+title: "SQSP Text Analysis"
+author: "Dane DeWees"
+date: "09/20/2021"
+output:
+  html_document:
+    
+    df_print: paged
+  always_allow_html: true
+  pdf_document: default
+theme: cerulean
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 14px;
+  }
+td {  /* Table  */
+  font-size: 12px;
+}
+h1.title {
+  font-size: 38px;
+  color: DarkRed;
+}
+h1 { /* Header 1 */
+  font-size: 28px;
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+    font-size: 22px;
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre { /* Code block - determines code spacing between lines */
+    font-size: 14px;
+}
+</style>
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+setwd('C:/Users/maxde/Desktop/SQSP/')
+getwd()
+
+###### Load packages ###### 
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(car)
+library(plotly)
+library(forcats)
+library(knitr)
+library(formattable)
+library(tidyr)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(ggthemes)
+library(extrafont)
+library(scales)
+library(dygraphs)
+library(xts)         
+library(tidyverse)
+library(lubridate)
+library(data.table)
+library(cowplot)
+library(randomForest)
+library(excelR)
+library(anytime)
+library(Hmisc)
+library(magrittr)
+library(janitor)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer)
+library(syuzhet)
+library(Rcpp)
+library(tidytext)
+library(sqldf)
+library(stringr)
+library(widyr)
+library(ggraph)
+
+
+
+
+
+
+## Load in files ##
+twitter_df <- read.csv("./twcs.csv", header = TRUE, sep = ",", na.strings=c("","NA"))
+
+## Removing non-relevent response_tweet_id info
+twitter_df$response_tweet_id <- sapply(strsplit(twitter_df$response_tweet_id, ','), function(x) sort(as.numeric(x))[1])
+```
+
+## Data tidying for dataset 
+
+```{r echo=FALSE}
+
+##################
+## Data tidying ## 
+##################
+
+
+## Subsetting created_at field to Month, Day, Time, etc using the str_split function ## 
+twitter_df_updated <- twitter_df %>% 
+  mutate(elements = str_split(created_at, fixed(" "), n=6)) %>% 
+  mutate(Month = map_chr(elements, 2),
+         Day = map_chr(elements, 1),
+         Day_num = map_chr(elements, 3),
+         Time = map_chr(elements, 4),
+         Year = map_chr(elements, 6),.keep="unused")
+
+
+
+
+
+## Renaming field values for inbound to Customer Support and Customer
+twitter_df_updated$inbound <- ifelse(twitter_df$inbound=="False", "Customer Support",
+                                   ifelse(twitter_df$inbound=="True", "Customer",
+                                          NA)) # all other values map to NA
+
+
+## Create Sector Field ## 
+twitter_df_updated$Sector <- ifelse(twitter_df$author_id == "hulu_support", "Streaming",
+                                   ifelse(twitter_df$author_id == "PandoraSupport", "Streaming",
+                                          ifelse(twitter_df$author_id == "SpotifyCares", "Streaming",
+                                                 ifelse(twitter_df$author_id == "GooglePlayMusic", "Streaming",
+                                                        ifelse(twitter_df$author_id == "TacoBellTeam", "Food Service",   
+                                                               ifelse(twitter_df$author_id == "McDonalds", "Food Service",
+                                                                      ifelse(twitter_df$author_id == "KFC_UKI_Help", "Food Service",
+                                                                             ifelse(twitter_df$author_id == "DunkinDonuts", "Food Service",
+                                                                                    ifelse(twitter_df$author_id == "ChipotleTweets", "Food Service",
+                                                                                           ifelse(twitter_df$author_id == "AskPapaJohns", "Food Service",
+                                                                                                  ifelse(twitter_df$author_id == "CarlsJr", "Food Service",
+                                                                                                         ifelse(twitter_df$author_id == "DoorDash_Help", "Food Service",
+                                                                                                                ifelse(twitter_df$author_id == "askpanera", "Food Service",
+                                                                                                                       ifelse(twitter_df$author_id == "AirAsiaSupport", "Travel",
+                                                                                                                              ifelse(twitter_df$author_id == "AlaskaAir", "Travel",
+                                                                                                                                    ifelse(twitter_df$author_id == "AmericanAir", "Travel",
+                                                                                                                                          ifelse(twitter_df$author_id == "Delta", "Travel",
+                                                                                                                                                ifelse(twitter_df$author_id == "JetBlue", "Travel",
+                                                                                                                                                      ifelse(twitter_df$author_id == "AskLyft", "Travel",
+                                                                                                                                                            ifelse(twitter_df$author_id == "Uber_Support", "Travel",
+                                                                                                                                                                  ifelse(twitter_df$author_id == "SouthwestAir", "Travel",
+                                                                                                                NA  ))))))))))))))))))))) # all other values map to NA
+
+
+
+## convert respective fields to factors ## 
+fac_cols <- c("tweet_id",
+              "author_id",
+              "inbound",
+              "response_tweet_id",
+              "in_response_to_tweet_id",
+              "Sector",
+              "Month",
+              "Day_num",
+              "Day",
+              "Year")
+
+twitter_df_updated[fac_cols] <- lapply(twitter_df_updated[fac_cols], as.factor)
+
+
+## Create Month field based on numeric instead of name ## 
+twitter_df_updated$Month_date <- ifelse(twitter_df_updated$Month=="Oct", "10",
+                                   ifelse(twitter_df_updated$Month=="Nov", "11",
+                                          ifelse(twitter_df_updated$Month=="Dec", "12",
+                                                 ifelse(twitter_df_updated$Month=="Jan", "1",
+                                                        ifelse(twitter_df_updated$Month=="Feb", "2",
+                                                               ifelse(twitter_df_updated$Month=="Mar", "3",
+                                                                      ifelse(twitter_df_updated$Month=="Apr", "4",
+                                                                             ifelse(twitter_df_updated$Month=="May", "5",
+                                                                                    ifelse(twitter_df_updated$Month=="Jun", "6",
+                                                                                           ifelse(twitter_df_updated$Month=="Jul", "7",
+                                                                                                  ifelse(twitter_df_updated$Month=="Aug", "8",
+                                                                                                         ifelse(twitter_df_updated$Month=="Sep", "9",
+                                                                                                                NA  )))))))))))) # all other values map to NA
+
+
+## concat date fields into single date column for visualization ## 
+twitter_df_updated$Date <- as.Date(with(twitter_df_updated, paste(Year, Month_date, Day_num, sep="-")), "%Y-%m-%d")
+
+## Reorder levels based on Month
+twitter_df_updated$Month <- ordered(twitter_df_updated$Month, levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",  "Aug", "Sep", "Oct", "Nov","Dec"))
+twitter_df <- NULL
+
+summary(twitter_df_updated)
+
+
+```
+
+
+## Preliminary Analysis 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE,}
+
+tweet_pattern <- "(?<=@)[A-Za-z_]+"
+tweet_cust_pattern <- "(?<=@)(\\d)+"
+
+
+
+twitter_df_updated <- twitter_df_updated %>%
+  mutate(Response_To_Comp = str_extract(text, tweet_pattern)) %>%
+  mutate(Response_To_Cust = str_extract(text, tweet_cust_pattern))
+```
+
+
+# Total # of companies in dataset - 108 Distinct Names.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE,}
+
+Company_list <- twitter_df_updated %>%
+  filter(inbound == 'Customer Support') %>%
+  group_by(author_id) %>%
+  summarise(no_rows = length(unique(author_id)))
+#Company_list
+
+
+test_test <- twitter_df_updated %>%
+  select(tweet_id, author_id, inbound, created_at, text, response_tweet_id, in_response_to_tweet_id)
+summary(test_test)
+
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE,}
+
+Total_mentions_to_comp <- twitter_df_updated %>%
+  mutate(Response_To_Comp = str_extract(text, tweet_pattern)) %>%
+  filter(inbound == 'Customer') %>%
+  group_by(inbound, Month) %>%
+  count(Response_To_Comp, sort = TRUE) %>%
+  mutate(Response_To_Comp = fct_reorder(Response_To_Comp, n)) %>%
+  #na.omit() %>%
+  summarise(Total = sum(n)) %>%
+  arrange(desc(Total))
+
+
+Total_mentions_to_responses <- twitter_df_updated %>%
+  filter(inbound == 'Customer') %>%
+  filter(is.na(Response_To_Comp)) %>%
+  filter(!is.na(Response_To_Cust)) %>%
+  group_by(inbound, Month) %>%
+  count(author_id, sort = TRUE) %>%
+  mutate(author_id = fct_reorder(author_id, n)) %>%
+  summarise(Total = sum(n)) %>%
+  arrange(desc(Total))
+
+
+
+Customer_to_customer_df <- twitter_df_updated %>%
+  filter(inbound == 'Customer') %>%
+  select(author_id, text) %>%
+  mutate(Response_To_Comp = str_extract(text, tweet_pattern)) %>%
+  filter(is.na(Response_To_Comp))
+```
+
+
+# Establish total number of tweets made by each customer based on respective company support - Top 10 companies based on Number of @mentions.
+
+``` {r echo=FALSE}
+twitter_df_updated %>%
+  mutate(Response_To_Comp = str_extract(text, tweet_pattern)) %>%
+  filter(inbound == 'Customer') %>%
+  count(Response_To_Comp, sort = TRUE) %>%
+  head(10) %>%
+  na.omit() %>%
+  mutate(Response_To_Comp = fct_reorder(Response_To_Comp, n)) %>%
+  ggplot(aes(n, Response_To_Comp, fill = Response_To_Comp)) +
+  geom_col(show.legend = FALSE,color="black") +
+  geom_text(aes(label=comma(n)),size=3,hjust=1,color="black")+
+  labs( x="Count", y = "Company") +
+  labs(title = "Top 10 companies mentioned by customer tweets")
+```
+
+# Establish total number of tweets made to each customer based on inbound status (company) - Top 25 companies based on Number of responses -- frequency of response
+
+```{r echo=FALSE}
+
+
+Total_response_to_cust <- twitter_df_updated %>%
+  filter(inbound == 'Customer Support') %>%
+  group_by(inbound, Month) %>%
+  count(author_id, sort = TRUE) %>%
+  mutate(author_id = fct_reorder(author_id, n)) %>%
+  #na.omit() %>%
+  summarise(Total = sum(n)) %>%
+  arrange(desc(Total))
+
+
+twitter_df_updated %>%
+  filter(inbound == 'Customer Support') %>%
+  count(author_id, sort = TRUE) %>%
+  head(10) %>%
+  na.omit() %>%
+  mutate(author_id = fct_reorder(author_id, n)) %>%
+  ggplot(aes(n, author_id, fill = author_id)) +
+  geom_col(show.legend = FALSE,color="black") +
+  geom_text(aes(label=comma(n)),size=3,hjust=1,color="black")+
+  labs( x="Count", y = "Company") +
+  labs(title = "Top 10 companies by tweet responses to customers")
+```
+
+
+
+# Measure number of tweets over time using 'Year' 
+
+```{r echo=FALSE}
+twitter_df_updated %>%
+  ggplot(aes(Year, fill = inbound)) +
+  geom_bar(position=position_dodge()) +
+  scale_y_log10(labels = comma) + labs(fill = "Tweet Group") + theme(
+  axis.title.x = element_text(color="black", size=15, face="bold"),
+  axis.title.y = element_text(color="black", size=15, face="bold"),
+  legend.title = element_text(colour = "black", size = 10, face = "bold"),
+  legend.text = element_text(colour = "black", size = 10, face = "plain"),
+  axis.text.x = element_text(colour = "black", size = 10, face = "plain"),
+  axis.text.y = element_text(colour = "black", size = 10, face = "plain")) +
+  labs( x="Year", y = "Count - log10")
+```
+
+# Total count per month to measure seasonality 
+
+```{r echo=FALSE}
+twitter_df_updated %>%
+  #filter(Year == '2017') %>%
+  ggplot(aes(Month, fill = inbound)) +
+  geom_bar(position=position_dodge()) +
+  scale_y_log10(labels = comma) +
+  facet_wrap(~ Year) +
+  labs(fill = "Tweet Group") + theme(
+  axis.title.x = element_text(color="black", size=15, face="bold"),
+  axis.title.y = element_text(color="black", size=15, face="bold"),
+  legend.title = element_text(colour = "black", size = 10, face = "bold"),
+  legend.text = element_text(colour = "black", size = 10, face = "plain"),
+  axis.text.x = element_text(colour = "black", size = 10, face = "plain"),
+  axis.text.y = element_text(colour = "black", size = 10, face = "plain")) +
+  labs( x="Month", y = "Count - log10")
+```
+
+
+# Total count per month to measure seasonality - 2017 benchmark 
+
+```{r echo=FALSE}
+twitter_df_updated %>%
+  #filter(Year == '2017') %>%
+  ggplot(aes(Month, fill = inbound)) +
+  geom_bar(position=position_dodge()) +
+  scale_y_log10(labels = comma) +
+  #facet_wrap(~ inbound) +
+  labs(fill = "Tweet Group") + theme(
+  axis.title.x = element_text(color="black", size=15, face="bold"),
+  axis.title.y = element_text(color="black", size=15, face="bold"),
+  legend.title = element_text(colour = "black", size = 10, face = "bold"),
+  legend.text = element_text(colour = "black", size = 10, face = "plain"),
+  axis.text.x = element_text(colour = "black", size = 10, face = "plain"),
+  axis.text.y = element_text(colour = "black", size = 10, face = "plain")) +
+  labs( x="Month", y = "Count - log10")
+```
+
+
+
+## Number of responses over time - Top 5 in volume in 2017 .
+
+```{r echo=FALSE}
+
+df_with_count_top5 <- twitter_df_updated %>%
+  filter(author_id %in% c("AmazonHelp", "AppleSupport", "Uber_Support", "SpotifyCares", "Delta", "Tesco")) %>%
+  group_by(author_id, Month) %>%
+  summarise(count=n())
+
+
+df_with_count_top5 %>%
+    group_by(author_id) %>%
+    top_n(12) %>%
+    ungroup %>%
+    mutate(author_id = as.factor(author_id),
+           Month = reorder_within(Month, count, author_id)) %>%
+    ggplot(aes(Month, count, fill = author_id)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~author_id, scales = "free_y") +
+    coord_flip() +
+    scale_x_reordered() +
+    scale_y_log10(labels = comma) +
+    labs(y = "Number of Tweets",
+         x = NULL,
+         title = "What were the most significant time frames for Customer Support",
+         subtitle = "Top 5 companies by volume of tweets - benchmark")
+
+
+
+## Need to visualize plot over each month grouped by comp - top 5 and bottom 5 ##
+
+```
+
+
+
+
+
+
+
+
+
+
+
+# Avg response time across Sprintcare in 2017
+
+```{r echo=FALSE}
+
+df_2017_sprintcare <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "sprintcare" & Response_To_Cust == "115712")
+
+df_2017_1151712 <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "115712")
+
+
+sprint_Supp_Ex <- rbind(df_2017_1151712, df_2017_sprintcare) %>%
+  arrange(created_at) 
+  
+
+sprint_Supp_Ex <- sprint_Supp_Ex[-1,]
+
+
+
+
+sprint_df <- sprint_Supp_Ex %>% 
+    separate(created_at, c("Day_name", "Month", "Day", "Hour", "Minute", "Second", "X", "Year")) %>% 
+    type.convert(as.is = TRUE) %>% 
+    mutate(Month = match(Month, month.abb)) %>% 
+    mutate(created_at = make_datetime(Year, Month, Day, Hour, Minute, Second), .keep="unused") %>%
+    group_by(group2 = cumsum(inbound == "Customer Support")) %>%
+    mutate(Avg_response_time = mean(difftime(max(created_at), min(created_at)))) %>%
+    mutate(author_id = first(author_id), inbound = first(inbound), avg = mean(difftime(first(created_at), created_at[-1], units = "min"))) %>%
+    filter(is.na(Response_To_Comp)) %>%
+    mutate(Avg_response_Time = as.numeric(Avg_response_time)) %>%
+    filter(inbound == "Customer Support")
+
+
+
+sprint_df_final <- sprint_df %>%
+  group_by(author_id) %>%
+    summarise(Total_Avg_Response_Time = mean(Avg_response_Time)) %>%
+    mutate(Avg_in_min = Total_Avg_Response_Time/60)
+
+```
+
+
+# Avg response time across VerizonSupport in 2017
+
+```{r echo=FALSE}
+
+df_2017_VerizonSupp <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "VerizonSupport" & Response_To_Cust == "116211")
+
+df_2017_116211 <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "116211")
+
+
+Verizon_Supp_Ex <- rbind(df_2017_116211, df_2017_VerizonSupp) %>%
+  arrange(created_at) 
+  
+
+Verizon_Supp_Ex <- Verizon_Supp_Ex[-1,]
+
+
+
+
+df <- Verizon_Supp_Ex %>% 
+    separate(created_at, c("Day_name", "Month", "Day", "Hour", "Minute", "Second", "X", "Year")) %>% 
+    type.convert(as.is = TRUE) %>% 
+    mutate(Month = match(Month, month.abb)) %>% 
+    mutate(created_at = make_datetime(Year, Month, Day, Hour, Minute, Second), .keep="unused") %>%
+    group_by(group2 = cumsum(inbound == "Customer Support")) %>%
+    mutate(Avg_response_time = mean(difftime(max(created_at), min(created_at)))) %>%
+    mutate(author_id = first(author_id), inbound = first(inbound), avg = mean(difftime(first(created_at), created_at[-1], units = "min"))) %>%
+    filter(is.na(Response_To_Comp)) %>%
+    mutate(Avg_response_Time = as.numeric(Avg_response_time)) %>%
+    filter(inbound == "Customer Support")
+
+
+
+df_final <- df %>%
+  group_by(author_id) %>%
+    summarise(Total_Avg_Response_Time = mean(Avg_response_Time)) %>%
+    mutate(Avg_in_min = Total_Avg_Response_Time/60)
+
+```
+
+
+# Avg response time across AmazonHelp in 2017
+
+```{r echo=FALSE}
+
+df_2017_AMZN <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "AmazonHelp" & Response_To_Cust == "130233")
+
+df_2017_130233 <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "130233")
+
+
+AMZN_Supp_Ex <- rbind(df_2017_130233, df_2017_AMZN) %>%
+  arrange(created_at) 
+  
+
+AMZN_Supp_Ex <- AMZN_Supp_Ex[-1,]
+
+
+
+
+AMZN_df <- AMZN_Supp_Ex %>% 
+    separate(created_at, c("Day_name", "Month", "Day", "Hour", "Minute", "Second", "X", "Year")) %>% 
+    type.convert(as.is = TRUE) %>% 
+    mutate(Month = match(Month, month.abb)) %>% 
+    mutate(created_at = make_datetime(Year, Month, Day, Hour, Minute, Second), .keep="unused") %>%
+    group_by(group2 = cumsum(inbound == "Customer Support")) %>%
+    mutate(Avg_response_time = mean(difftime(max(created_at), min(created_at)))) %>%
+    mutate(author_id = first(author_id), inbound = first(inbound), avg = mean(difftime(first(created_at), created_at[-1], units = "min"))) %>%
+    filter(is.na(Response_To_Comp)) %>%
+    mutate(Avg_response_Time = as.numeric(Avg_response_time)) %>%
+    filter(inbound == "Customer Support")
+
+
+
+AMZN_df_final <- AMZN_df %>%
+  group_by(author_id) %>%
+    summarise(Total_Avg_Response_Time = mean(Avg_response_Time)) %>%
+    mutate(Avg_in_min = Total_Avg_Response_Time/60)
+
+```
+
+
+# Avg response time across AmazonHelp in 2017
+
+```{r echo=FALSE}
+
+df_2017_APPL <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "AppleSupport" & Response_To_Cust == "115855")
+
+df_2017_115855 <- subset(twitter_df_updated, twitter_df_updated$Year == 2017) %>%
+  filter(author_id == "115855")
+
+
+APPL_Supp_Ex <- rbind(df_2017_115855, df_2017_APPL) %>%
+  arrange(created_at) 
+  
+
+APPL_Supp_Ex <- APPL_Supp_Ex[-1,]
+
+
+
+
+APPL_Supp_Ex <- APPL_Supp_Ex %>% 
+    separate(created_at, c("Day_name", "Month", "Day", "Hour", "Minute", "Second", "X", "Year")) %>% 
+    type.convert(as.is = TRUE) %>% 
+    mutate(Month = match(Month, month.abb)) %>% 
+    mutate(created_at = make_datetime(Year, Month, Day, Hour, Minute, Second), .keep="unused") %>%
+    group_by(group2 = cumsum(inbound == "Customer Support")) %>%
+    mutate(Avg_response_time = mean(difftime(max(created_at), min(created_at)))) %>%
+    mutate(author_id = first(author_id), inbound = first(inbound), avg = mean(difftime(first(created_at), created_at[-1], units = "min"))) %>%
+    filter(is.na(Response_To_Comp)) %>%
+    mutate(Avg_response_Time = as.numeric(Avg_response_time)) %>%
+    filter(inbound == "Customer Support")
+
+
+
+APPL_df_final <- APPL_Supp_Ex %>%
+  group_by(author_id) %>%
+    summarise(Total_Avg_Response_Time = mean(Avg_response_Time)) %>%
+    mutate(Avg_in_min = Total_Avg_Response_Time/60)
+
+```
+
+
+
+# Example metric for avg response time across different companies given conversation with customer.
+
+```{r echo=FALSE}
+Avg_Reponse_Time_tbl <- rbind(AMZN_df_final, df_final, sprint_df_final)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Response Ratio of mentions/responses and then rank by highest ratio - top 10 
+
+```{r echo=FALSE}
+Response_df <- sqldf(
+
+    "select * from Total_response_to_cust 
+    union  
+    select * FROM Total_mentions_to_comp"
+    )
+
+# percent <- function(x, digits = 2, format = "f", ...) {
+#   paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+# }
+
+
+Response_df_final <- Response_df %>%
+    arrange(Month) %>%
+    group_by(Month) %>%
+    mutate(ResponseRatio = Total/first(Total), ResponseRatio = replace(ResponseRatio, 1, first(ResponseRatio))) %>%
+    filter(inbound == "Customer Support")
+
+
+
+# Response_df_final$ResponseRatio <- percent(Response_df_final$ResponseRatio)
+
+Response_ratio <- Response_df_final %>%
+  group_by(inbound) %>%
+  summarise(Ratio = mean(ResponseRatio))
+
+global_response_ratio <- Response_ratio$Ratio
+```
+
+
+```{r echo=FALSE}
+
+## Create Month field based on numeric instead of name ## 
+Response_df_final$Month_Response_Ratio <- ifelse(Response_df_final$Month=="Oct", "Above",
+                                              ifelse(Response_df_final$Month=="Nov", "Above",
+                                                  ifelse(Response_df_final$Month=="Dec", "Above",
+                                                      ifelse(Response_df_final$Month=="Sep", "Above",
+                                                          ifelse(Response_df_final$Month=="Feb", "Above",
+                                                                ifelse(Response_df_final$Month=="May", "Above",
+                                                                      ifelse(Response_df_final$Month=="Apr", "Below",
+                                                                          ifelse(Response_df_final$Month=="Aug", "Below",
+                                                                                ifelse(Response_df_final$Month=="Jul", "Below",
+                                                                                      ifelse(Response_df_final$Month=="Mar", "Below",
+                                                                                             ifelse(Response_df_final$Month=="Jan", "Below",
+                                                                                                    NA))))))))))) # all other values map to NA
+
+
+
+Response_df_final$Month_Response_Ratio <- as.factor(Response_df_final$Month_Response_Ratio)
+
+Response_df_final %>%
+    group_by(inbound) %>%
+    top_n(12) %>%
+    ungroup %>%
+    # mutate(inbound = as.factor(inbound),
+    #        Month = reorder_within(Month, ResponseRatio, inbound)) %>%
+    ggplot(aes(Month, ResponseRatio, fill = Month_Response_Ratio)) +
+    geom_col(show.legend = TRUE) +
+    coord_flip() +
+    geom_hline(yintercept = global_response_ratio, color="blue", size=1, show_guide = FALSE) +
+    scale_x_reordered() +
+    labs(y = "Response Ratio",
+         x = "Month",
+         fill = "Avg Response Ratio",
+         legend.title = element_text(colour = "black", size = 10, face = "bold"),
+         legend.text = element_text(colour = "black", size = 8, face = "plain"),
+         title = "Response Ratio between Customer Support and Customer Requests by Month",
+         subtitle = "Time series plot given avg response ratio")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r echo=FALSE}
+
+
+Total_response_to_cust_top6 <- twitter_df_updated %>%
+  filter(inbound == 'Customer Support') %>%
+  filter(author_id %in% c("AmazonHelp", "AppleSupport", "Uber_Support", "SpotifyCares", "Delta", "Tesco")) %>%
+  group_by(inbound, Month) %>%
+  count(author_id, sort = TRUE) %>%
+  mutate(author_id = fct_reorder(author_id, n)) %>%
+  na.omit() %>%
+  summarise(Total = sum(n)) %>%
+  arrange(desc(Total))
+
+
+
+Total_mentions_to_comp_top6 <- twitter_df_updated %>%
+  filter(inbound == 'Customer') %>%
+  filter(Response_To_Comp %in% c("AmazonHelp", "AppleSupport", "Uber_Support", "SpotifyCares", "Delta", "Tesco")) %>%
+  group_by(inbound, Month) %>%
+  count(Response_To_Comp, sort = TRUE) %>%
+  mutate(Response_To_Comp = fct_reorder(Response_To_Comp, n)) %>%
+  na.omit() %>%
+  summarise(Total = sum(n)) %>%
+  arrange(desc(Total))
+
+
+
+Response_df_top6 <- sqldf(
+
+    "select * from Total_response_to_cust_top6 
+    union  
+    select * FROM Total_mentions_to_comp_top6"
+    )
+
+# percent <- function(x, digits = 2, format = "f", ...) {
+#   paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+# }
+
+
+Response_df_final_top6 <- Response_df_top6 %>%
+    arrange(Month) %>%
+    group_by(Month) %>%
+    mutate(ResponseRatio = Total/first(Total), ResponseRatio = replace(ResponseRatio, 1, first(ResponseRatio))) %>%
+    filter(inbound == "Customer Support")
+
+
+
+# Response_df_final$ResponseRatio <- percent(Response_df_final$ResponseRatio)
+Response_ratio_top6 <- Response_df_final_top6 %>%
+  group_by(inbound) %>%
+  summarise(Ratio = mean(ResponseRatio))
+
+global_response_ratio_top6 <- Response_ratio_top6$Ratio
+```
+
+
+```{r echo=FALSE}
+
+## Create Month field based on numeric instead of name ## 
+Response_df_final_top6$Month_Response_Ratio <- ifelse(Response_df_final_top6$Month=="Oct", "Above",
+                                              ifelse(Response_df_final_top6$Month=="Nov", "Above",
+                                                  ifelse(Response_df_final_top6$Month=="Dec", "Above",
+                                                      ifelse(Response_df_final_top6$Month=="Sep", "Above",
+                                                          ifelse(Response_df_final_top6$Month=="Feb", "Below",
+                                                                ifelse(Response_df_final_top6$Month=="May", "Below",
+                                                                      ifelse(Response_df_final_top6$Month=="Apr", "Below",
+                                                                          ifelse(Response_df_final_top6$Month=="Aug", "Below",
+                                                                                ifelse(Response_df_final_top6$Month=="Jul", "Below",
+                                                                                      ifelse(Response_df_final_top6$Month=="Mar", "Below",
+                                                                                             ifelse(Response_df_final_top6$Month=="Jan", "Below",
+                                                                                                    NA))))))))))) # all other values map to NA
+
+
+
+Response_df_final_top6$Month_Response_Ratio <- as.factor(Response_df_final_top6$Month_Response_Ratio)
+
+Response_df_final_top6 %>%
+    group_by(inbound) %>%
+    top_n(12) %>%
+    ungroup %>%
+    # mutate(inbound = as.factor(inbound),
+    #        Month = reorder_within(Month, ResponseRatio, inbound)) %>%
+    ggplot(aes(Month, ResponseRatio, fill = Month_Response_Ratio)) +
+    geom_col(show.legend = TRUE) +
+    coord_flip() +
+    geom_hline(yintercept = global_response_ratio, color="blue", size=1, show.legend = TRUE) +
+    geom_hline(yintercept = global_response_ratio_top6, color="green", size=1, show.legend  = TRUE) +
+    scale_x_reordered() +
+    labs(y = "Response Ratio",
+         x = "Month",
+         fill = "Avg Response Ratio",
+         legend.title = element_text(colour = "black", size = 10, face = "bold"),
+         legend.text = element_text(colour = "black", size = 8, face = "plain"),
+         title = "Response Ratio for top companies mentioned by customers",
+         subtitle = "Time series plot given avg response ratio")
+```
+
+
+
+
+
+
+
+
+## Number of responses over time - By sector: Food - 2017 .
+
+
+```{r echo=FALSE}
+
+Food_df <- twitter_df_updated %>%
+  filter(author_id %in% c("TacoBellTeam", "McDonalds", "KFC_UKI_Help", "DunkinDonuts", "ChipotleTweets", "AskPapaJohns") & Year == 2017) %>%
+  group_by(author_id, Month) %>%
+  mutate(count=n())
+
+
+Food_df_rank_df <- Food_df %>%
+  select(author_id, Year, Month) %>%
+  group_by(author_id, Year, Month) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total, .by_group = TRUE)) %>%
+  mutate(position = rank(-total))
+
+
+
+Food_df_rank_df %>%
+    group_by(author_id) %>%
+    top_n(12) %>%
+    ungroup %>%
+    mutate(author_id = as.factor(author_id),
+           Month = reorder_within(Month, total, author_id)) %>%
+    ggplot(aes(Month, total, fill = author_id)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~author_id, scales = "free_y") +
+    coord_flip() +
+    scale_x_reordered() +
+    scale_y_log10(labels = comma) +
+    labs(y = "Number of Tweets",
+         x = NULL,
+         title = "What were the most significant time frames for Customer Support by Food Service",
+         subtitle = "Food companies by volume of tweets - benchmark")
+## Need to visualize plot over each month grouped by comp - top 5 and bottom 5 ##
+```
+
+
+
+
+
+## Number of responses over time - By sector.
+```{r echo=FALSE}
+Sector_df <- twitter_df_updated %>%
+  group_by(Sector, author_id, Month) %>%
+  na.omit() %>%
+  mutate(count=n())
+
+
+Sector_df_rank_df <- Sector_df %>%
+  #select(Sector, Month) %>%
+  group_by(Sector, Month) %>%
+  summarise(total = sum(count)) %>%
+  arrange(desc(total, .by_group = TRUE)) %>%
+  mutate(position = rank(-total))
+
+
+
+Sector_df_rank_df %>%
+    group_by(Sector) %>%
+    na.omit() %>%
+    #top_n(12) %>%
+    ungroup %>%
+    mutate(Sector = as.factor(Sector),
+           Month = reorder_within(Month,  total, Sector)) %>%
+    ggplot(aes(Month, total, fill = Sector)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~Sector, scales = "free") +
+    #coord_flip() +
+    scale_x_reordered() +
+    scale_y_log10(labels = comma) +
+    labs(y = "Number of Tweets",
+         x = NULL,
+         title = "What were the most significant time frames for Customer Support by Sector",
+         subtitle = "Volume of tweets - benchmark")
+
+
+
+## Need to visualize plot over each month grouped by comp - top 5 and bottom 5 ##
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r echo=FALSE}
+Customer_df <- twitter_df_updated %>%
+  filter(inbound == 'Customer') %>%
+  select(author_id, text) %>%
+  mutate(Response_To_Comp = str_extract(text, tweet_pattern)) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+")) %>%
+  unnest_tokens(word, Cleaned_Tweet) %>%
+  anti_join(stop_words) %>%
+  filter(word != "ã") %>%
+  filter(word != "t.co") %>%
+  filter(word != "https") %>%
+  filter(word != "ðÿ") %>%
+  filter(word != "å") %>%
+  filter(word != "ä") %>%
+  filter(word != "â") %>%
+  filter(word != "iâ") %>%
+  filter(word != "à") %>%
+  filter(word != "ã") %>%
+  filter(word != "itâ") %>%
+  filter(word != "ç") %>%
+  filter(word != "æ") %>%
+  filter(word != "ãƒ") %>%
+  filter(word != "2") %>%
+  filter(word != "šã") %>%
+  filter(word != "ÿã") %>%
+  filter(word != "1") %>%
+  filter(word != "ˆã") %>%
+  filter(word != "è") %>%
+  filter(word != "œã") %>%
+  filter(word != "3") %>%
+  filter(word != "4") %>%
+  na.omit()
+
+
+
+
+Customer_to_customer_df <- twitter_df_updated %>%
+  filter(inbound == 'Customer') %>%
+  select(author_id, text) %>%
+  mutate(Response_To_Comp = str_extract(text, tweet_pattern)) %>%
+  filter(is.na(Response_To_Comp)) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+")) %>%
+  unnest_tokens(word, Cleaned_Tweet) %>%
+  anti_join(stop_words) %>%
+  filter(word != "ã") %>%
+  filter(word != "t.co") %>%
+  filter(word != "https") %>%
+  filter(word != "ðÿ") %>%
+  filter(word != "å") %>%
+  filter(word != "ä") %>%
+  filter(word != "â") %>%
+  filter(word != "iâ") %>%
+  filter(word != "à") %>%
+  filter(word != "ã") %>%
+  filter(word != "itâ") %>%
+  filter(word != "ç") %>%
+  filter(word != "æ") %>%
+  filter(word != "ãƒ") %>%
+  filter(word != "2") %>%
+  filter(word != "šã") %>%
+  filter(word != "ÿã") %>%
+  filter(word != "1") %>%
+  filter(word != "ˆã") %>%
+  filter(word != "è") %>%
+  filter(word != "œã") %>%
+  filter(word != "3") %>%
+  filter(word != "4")
+
+
+
+
+Customer_supp_df <- twitter_df_updated %>%
+  filter(inbound == 'Customer Support') %>%
+  select(author_id, text) %>%
+  mutate(Response_To_Cust = str_extract(text, tweet_cust_pattern)) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+")) %>%
+  unnest_tokens(word, Cleaned_Tweet) %>%
+  anti_join(stop_words) %>%
+  filter(word != "ã") %>%
+  filter(word != "t.co") %>%
+  filter(word != "https") %>%
+  filter(word != "ðÿ") %>%
+  filter(word != "å") %>%
+  filter(word != "ä") %>%
+  filter(word != "â") %>%
+  filter(word != "iâ") %>%
+  filter(word != "à") %>%
+  filter(word != "ã") %>%
+  filter(word != "itâ") %>%
+  filter(word != "ç") %>%
+  filter(word != "æ") %>%
+  filter(word != "ãƒ") %>%
+  filter(word != "2") %>%
+  filter(word != "šã") %>%
+  filter(word != "ÿã") %>%
+  filter(word != "1") %>%
+  filter(word != "ˆã") %>%
+  filter(word != "è") %>%
+  filter(word != "œã") %>%
+  filter(word != "3") %>%
+  filter(word != "4") %>%
+  na.omit()
+```
+
+## Most common words found in tweets to @companies
+
+```{r echo=FALSE}
+
+Customer_df %>%
+  count(word, sort = TRUE) %>%
+  head(30) %>%
+  mutate(word = fct_reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  coord_flip()
+```
+
+## Most common words found in tweets to @Customer tweets
+
+```{r echo=FALSE}
+
+Customer_supp_df %>%
+  count(word, sort = TRUE) %>%
+  head(30) %>%
+  mutate(word = fct_reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  coord_flip()
+
+```
+
+
+## Most common words found in tweets from customer to customer
+
+```{r echo=FALSE}
+
+Customer_to_customer_df %>%
+  count(word, sort = TRUE) %>%
+  head(30) %>%
+  mutate(word = fct_reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  coord_flip()
+
+```
+
+
+
+
+
+```{r echo=FALSE}
+
+###########################
+## Preliminary Analysis ## 
+###########################
+
+
+Top_Comp_Mentions_df <- twitter_df_updated %>%
+  filter(inbound == 'Customer') %>%
+  filter(Response_To_Comp %in% c("AmazonHelp", "AppleSupport", "Uber_Support", "AmericanAir", "Delta", "VirginTrains")) %>%
+  select(author_id, text) %>%
+  mutate(Response_To_Comp = str_extract(text, tweet_pattern)) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+")) %>%
+  unnest_tokens(word, Cleaned_Tweet) %>%
+  anti_join(stop_words) %>%
+  filter(word != "ã") %>%
+  filter(word != "t.co") %>%
+  filter(word != "https") %>%
+  filter(word != "ðÿ") %>%
+  filter(word != "å") %>%
+  filter(word != "ä") %>%
+  filter(word != "â") %>%
+  filter(word != "iâ") %>%
+  filter(word != "à") %>%
+  filter(word != "ã") %>%
+  filter(word != "itâ") %>%
+  filter(word != "ç") %>%
+  filter(word != "æ") %>%
+  filter(word != "ãƒ") %>%
+  filter(word != "2") %>%
+  filter(word != "šã") %>%
+  filter(word != "ÿã") %>%
+  filter(word != "1") %>%
+  filter(word != "ˆã") %>%
+  filter(word != "è") %>%
+  filter(word != "œã") %>%
+  filter(word != "3") %>%
+  filter(word != "4") %>%
+  na.omit()
+
+
+Top_Customer_supp_df <- twitter_df_updated %>%
+  filter(inbound == 'Customer Support') %>%
+  select(author_id, text) %>%
+  mutate(Response_To_Cust = str_extract(text, tweet_cust_pattern)) %>%
+  filter(author_id %in% c("AmazonHelp", "AppleSupport", "Uber_Support", "SpotifyCares", "Delta", "Tesco")) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+")) %>%
+  unnest_tokens(word, Cleaned_Tweet) %>%
+  anti_join(stop_words) %>%
+  filter(word != "ã") %>%
+  filter(word != "t.co") %>%
+  filter(word != "https") %>%
+  filter(word != "ðÿ") %>%
+  filter(word != "å") %>%
+  filter(word != "ä") %>%
+  filter(word != "â") %>%
+  filter(word != "iâ") %>%
+  filter(word != "à") %>%
+  filter(word != "ã") %>%
+  filter(word != "itâ") %>%
+  filter(word != "ç") %>%
+  filter(word != "æ") %>%
+  filter(word != "ãƒ") %>%
+  filter(word != "2") %>%
+  filter(word != "šã") %>%
+  filter(word != "ÿã") %>%
+  filter(word != "1") %>%
+  filter(word != "ˆã") %>%
+  filter(word != "è") %>%
+  filter(word != "œã") %>%
+  filter(word != "3") %>%
+  filter(word != "4") %>%
+  na.omit()
+```
+
+## Customer tweets - Top words across top companies 
+
+```{r echo=FALSE}
+
+Top_Comp_Mentions_cnt <- Top_Comp_Mentions_df %>%
+  group_by(Response_To_Comp) %>%
+  count(word, sort = TRUE)
+
+
+Top_Comp_Mentions_cnt %>%
+  group_by(Response_To_Comp) %>%
+    top_n(10) %>%
+    ungroup %>%
+    mutate(Response_To_Comp = as.factor(Response_To_Comp),
+           word = reorder_within(word, n, Response_To_Comp)) %>%
+    ggplot(aes(word, n, fill = Response_To_Comp)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~Response_To_Comp, scales = "free_y") +
+    coord_flip() +
+    scale_x_reordered() +
+    #scale_y_continuous(expand = c(0,0)) +
+    labs(y = "Number of babies per decade",
+         x = NULL,
+         title = "What were the most common words from tweet to Customer Support?",
+         subtitle = "Pulled from Top 6 Companies by @mentions from customers")
+
+
+
+```
+
+
+
+## Customer Support tweets - Top words across top companies 
+```{r echo=FALSE}
+
+
+Top_Comp_Response_cnt <- Top_Customer_supp_df %>%
+  group_by(author_id) %>%
+  count(word, sort = TRUE)
+
+
+Top_Comp_Response_cnt %>%
+  group_by(author_id) %>%
+    top_n(10) %>%
+    ungroup %>%
+    mutate(author_id = as.factor(author_id),
+           word = reorder_within(word, n, author_id)) %>%
+    ggplot(aes(word, n, fill = author_id)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~author_id, scales = "free_y") +
+    coord_flip() +
+    scale_x_reordered() +
+    #scale_y_continuous(expand = c(0,0)) +
+    labs(y = "Number of babies per decade",
+         x = NULL,
+         title = "What were the most common words from tweet to customer?",
+         subtitle = "Pulled from Top 6 Companies by Customer Support responses")
+
+```
+
+
+
+## Word correlation between tweets - find correlations among the words based on @company. 
+
+# Correlation between word appearing in one tweet vs the other
+
+```{r echo=FALSE}
+
+tweet_correlations <- Customer_df %>%
+  add_count(word) %>%
+  filter(n > 2000) %>%
+  pairwise_cor(word, Response_To_Comp, sort = TRUE) %>%
+  head(200)
+
+
+
+tweet_correlations %>%
+  igraph::graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation)) +
+  geom_node_point() +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void() +
+  #theme(legend.position = "none") +
+  labs(title = "Words that often appear together in tweets to Customer Support")
+```
+
+
+## Correlation of words in tweets sent to customers from support
+
+```{r echo=FALSE}
+
+tweet_correlations_supp <- Customer_supp_df %>%
+  add_count(word) %>%
+  filter(n >= 5000) %>%
+  pairwise_cor(word, Response_To_Cust, sort = TRUE) %>%
+  head(200)
+
+
+tweet_correlations_supp %>%
+  igraph::graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation)) +
+  geom_node_point() +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void() +
+  #theme(legend.position = "none") +
+  labs(title = "Words that often appear together in tweets from Customer Support")
+```
+
+
+
+
+
+
+
+
+
+
+## Sentiment Analysis over customer feedback
+```{r echo=FALSE}
+
+set.seed(1234)
+
+
+amazon_df <- subset(twitter_df_updated, twitter_df_updated$Response_To_Comp == "AmazonHelp")
+
+sample_amazon_df <- amazon_df %>%
+  sample_n(10000) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+"))
+
+amz_ew_sentiment<-get_nrc_sentiment(sample_amazon_df$Cleaned_Tweet)
+
+                                
+
+AMZ_sentimentscores<-data.frame(colSums(amz_ew_sentiment[,]))
+names(AMZ_sentimentscores) <- "Score"
+
+AMZ_sentimentscores <- cbind("sentiment"=rownames(AMZ_sentimentscores),AMZ_sentimentscores)
+rownames(AMZ_sentimentscores) <- NULL
+
+
+
+AMZ_sentimentscores %>%
+  mutate(sentiment = fct_reorder(sentiment, Score)) %>%
+  ggplot(aes(Score, sentiment, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  labs( x="Score", y = "Sentiment") +
+  labs(title = "Amazon Customer sentiment based on tweets")
+```
+
+
+
+
+```{r echo=FALSE}
+
+set.seed(1234)
+
+
+apple_df <- subset(twitter_df_updated, twitter_df_updated$Response_To_Comp == "AppleSupport")
+
+sample_apple_df <- apple_df %>%
+  sample_n(10000) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+"))
+
+apple_ew_sentiment<-get_nrc_sentiment(sample_apple_df$Cleaned_Tweet)
+
+                                
+
+apple_sentimentscores<-data.frame(colSums(apple_ew_sentiment[,]))
+names(apple_sentimentscores) <- "Score"
+
+apple_sentimentscores <- cbind("sentiment"=rownames(apple_sentimentscores),apple_sentimentscores)
+rownames(apple_sentimentscores) <- NULL
+
+apple_sentimentscores %>%
+  mutate(sentiment = fct_reorder(sentiment, Score)) %>%
+  ggplot(aes(Score, sentiment, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  labs( x="Score", y = "Sentiment") +
+  labs(title = "Apple Customer sentiment based on tweets")
+```
+
+
+```{r echo=FALSE}
+
+set.seed(1234)
+
+
+Uber_df <- subset(twitter_df_updated, twitter_df_updated$Response_To_Comp == "Uber_Support")
+
+sample_Uber_df <- Uber_df %>%
+  sample_n(10000) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+"))
+
+Uber_ew_sentiment <-get_nrc_sentiment(sample_Uber_df$Cleaned_Tweet)
+
+                                
+
+Uber_sentimentscores <- data.frame(colSums(Uber_ew_sentiment[,]))
+names(Uber_sentimentscores) <- "Score"
+
+Uber_sentimentscores <- cbind("sentiment"=rownames(Uber_sentimentscores),Uber_sentimentscores)
+rownames(Uber_sentimentscores) <- NULL
+
+Uber_sentimentscores %>%
+  mutate(sentiment = fct_reorder(sentiment, Score)) %>%
+  ggplot(aes(Score, sentiment, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  labs( x="Score", y = "Sentiment") +
+  labs(title = "Apple Customer sentiment based on tweets")
+```
+
+
+
+```{r echo=FALSE}
+
+Customer_to_customer_sent_df <- twitter_df_updated %>%
+  sample_n(20000) %>%
+  mutate(Cleaned_Tweet = str_remove_all(text, "\\s*@\\S+")) %>%
+  filter(inbound == 'Customer') %>%
+  filter(is.na(Response_To_Comp))
+
+
+
+Customer_to_customer_ew_sentiment <-get_nrc_sentiment(Customer_to_customer_sent_df$Cleaned_Tweet)
+
+                                
+
+cUSTOMER_sentimentscores <- data.frame(colSums(Customer_to_customer_ew_sentiment[,]))
+names(cUSTOMER_sentimentscores) <- "Score"
+
+cUSTOMER_sentimentscores <- cbind("sentiment"=rownames(cUSTOMER_sentimentscores),cUSTOMER_sentimentscores)
+rownames(cUSTOMER_sentimentscores) <- NULL
+
+cUSTOMER_sentimentscores %>%
+  mutate(sentiment = fct_reorder(sentiment, Score)) %>%
+  ggplot(aes(Score, sentiment, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  labs( x="Score", y = "Sentiment") +
+  labs(title = "Apple Customer sentiment based on tweets")
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
